@@ -1,6 +1,8 @@
 from robocorp.tasks import task
 from robocorp import browser
+from robocorp import vault
 from RPA.Excel.Application import Application
+from RPA.Email.ImapSmtp import ImapSmtp
 from playwright.sync_api import TimeoutError
 
 from datetime import datetime, date, timedelta
@@ -26,9 +28,7 @@ def main():
 
     ]
 
-    search_duunitori(keywords)
-
-
+   search_duunitori(keywords)
 
 
 def search_duunitori(keywords):
@@ -77,9 +77,23 @@ def search_duunitori(keywords):
         page.goto("https://duunitori.fi" + link)
         rows.append(get_data())
 
+    # Poistetaan kaksoiskappaleet listasta
+    unique_rows = [list(x) for x in set(tuple(row) for row in rows)]
+
+    #Suodatetaan ja haetaan top 5 työpaikat
+    top_5_jobs = filter_and_get_top_5(unique_rows)
+
+    #Jos työpaikkoja löytyy, lähetetään yhteenveto sähköpostitse
+    if top_5_jobs:
+        send_email_summary(top_5_jobs)
+
+    #Päivitetään rows muuttuja Excel tallennusta varten
+    rows = unique_rows
+
     add_data_to_excel(rows)
 
 def get_data():
+    """Hakee työpaikkojen tiedot ja palauttaa ne listana"""
     page = browser.page()
     title = page.locator("h1.text--break-word").inner_text()
     try:
@@ -124,3 +138,55 @@ def add_data_to_excel(rows):
         app.save_excel_as(f"output/history/{today}_jobs.xlsx")
     finally:
         app.quit_application()
+
+def filter_and_get_top_5(rows):
+    scored_jobs = []
+    bonus_keywords = ["Python", "RPA", "etätyö", "Fullstack", "Java"]
+
+    for row in rows:
+        # row[0] = title, row[1] = company, row[2] = location, row[3] = url
+        title_lower = row[0].lower()
+        score = 0
+
+        # Suodatus: Poistetaan Senior ja lead työpaikat
+        if "senior" in title_lower or "lead" in title_lower:
+            continue
+
+        # Lasketaan bonuspisteet hakusanoista
+        for word in bonus_keywords:
+            if word.lower() in title_lower:
+                score += 1
+
+        # Lisätään pisteet listaan
+        scored_jobs.append((score, row))
+
+    # Järjestetään työpaikat pisteiden mukaan laskevasti
+    scored_jobs.sort(key=lambda x: x[0], reverse=True)
+
+    # Palautetaan top 5 työpaikat
+    return [job[1] for job in scored_jobs[:5]]
+
+# Kirjaudutaan sähköpostipalvelimelle
+def send_email_summary(top_5_jobs):
+    mail_credentials = vault.get_secret("EmailCredentials")
+    mail = ImapSmtp(smtp_server="smtp-mail.outlook.com", smtp_port=587)
+    mail.authorize_smtp(
+        account=mail_credentials["username"],
+        password=mail_credentials["password"],  
+    )
+
+    # Luodaan sähköpostin sisältö
+    body = "<h2>Päivän Top 5 kiinnostavimmat työpaikat</h2><ul>"
+    for i, job in enumerate(top_5_jobs, start=1):
+        body += f"<li><b>{i}. {job['title']}</b> - {job['company']} ({job['location']})<br>"
+        body += f"<a href='{job['url']}'>Katso ilmoitus tästä</a></li><br>"
+    body += "</ul>"
+
+    # Sähköpostin lähetys
+    mail.send_message(
+        sender=mail_credentials["username"],
+        recipients=mail_credentials["recipient"],
+        subject=f"Uudet Top 5 työpaikat - {date.today().strftime('%d.%m.%Y')}",
+        body=body,
+        html=True
+    )
