@@ -24,11 +24,12 @@ def main():
         "rpa-asiantuntija",
         "Ohjelmistokehittäjä",
         "Fullstack-kehittäjä",
+        "DevOps-insinööri",
         "Pilvipalveluasiantuntija"
 
     ]
 
-   search_duunitori(keywords)
+    search_duunitori(keywords)
 
 
 def search_duunitori(keywords):
