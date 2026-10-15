@@ -9,7 +9,7 @@ from datetime import datetime, date, timedelta
 from html import escape
 import sys 
 
-SMTP_SERVER = "smtp-mail.outlook.com"
+SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
 @task
@@ -172,7 +172,7 @@ def filter_and_get_top_5(rows):
 # Kirjaudutaan sähköpostipalvelimelle
 def send_email_summary(top_5_jobs):
     mail_credentials = vault.get_secret("EmailCredentials")
-    mail = ImapSmtp(smtp_server="smtp-mail.outlook.com", smtp_port=587)
+    mail = ImapSmtp(smtp_server=SMTP_SERVER, smtp_port=SMTP_PORT)
     mail.authorize_smtp(
         account=mail_credentials["username"],
         password=mail_credentials["password"],  
