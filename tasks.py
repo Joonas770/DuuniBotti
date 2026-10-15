@@ -6,9 +6,11 @@ from RPA.Email.ImapSmtp import ImapSmtp
 from playwright.sync_api import TimeoutError
 
 from datetime import datetime, date, timedelta
+from html import escape
 import sys 
 
-
+SMTP_SERVER = "smtp-mail.outlook.com"
+SMTP_PORT = 587
 
 @task
 def main():
