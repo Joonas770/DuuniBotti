@@ -181,8 +181,8 @@ def send_email_summary(top_5_jobs):
     # Luodaan sähköpostin sisältö
     body = "<h2>Päivän Top 5 kiinnostavimmat työpaikat</h2><ul>"
     for i, job in enumerate(top_5_jobs, start=1):
-        body += f"<li><b>{i}. {job['title']}</b> - {job['company']} ({job['location']})<br>"
-        body += f"<a href='{job['url']}'>Katso ilmoitus tästä</a></li><br>"
+        body += f"<li><b>{i}. {job[0]}</b> - {job[1]} ({job[2]})<br>"
+        body += f"<a href='{job[3]}'>Katso ilmoitus tästä</a></li><br>"
     body += "</ul>"
 
     # Sähköpostin lähetys
