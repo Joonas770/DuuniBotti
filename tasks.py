@@ -8,6 +8,7 @@ from playwright.sync_api import TimeoutError
 from datetime import datetime, date, timedelta
 from html import escape
 import sys 
+import traceback
 
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
@@ -31,7 +32,13 @@ def main():
 
     ]
 
-    search_duunitori(keywords)
+    try:
+        search_duunitori(keywords)
+    except Exception as e:
+        # Ilmoitetaan virheestä käyttäjälle sähköpostitse
+        error_msg = f"Työpaikkahaun suoritus epäonnistui: {str(e)}\n\n{traceback.format_exc()}"
+        print(error_msg)
+        send_notification_email("Työpaikkahaun suoritus epäonnistui", f"<p>{escape(error_msg).replace('\n', '<br>')}</p>")
 
 
 def search_duunitori(keywords):
@@ -89,11 +96,17 @@ def search_duunitori(keywords):
     #Jos työpaikkoja löytyy, lähetetään yhteenveto sähköpostitse
     if top_5_jobs:
         send_email_summary(top_5_jobs)
+    else:
+        print("Uusia työpaikkailmoituksia ei löytynyt.")
+        send_notification_email(
+            f"Ei uusia työpaikkoja - {today.strftime('%d.%m.%Y')}",
+            "<p>Uusia työpaikkailmoituksia ei löytynyt.</p>"
+        )
 
     #Päivitetään rows muuttuja Excel tallennusta varten
     rows = unique_rows
-
-    add_data_to_excel(rows)
+    if rows:
+        add_data_to_excel(rows)
 
 def get_data():
     """Hakee työpaikkojen tiedot ja palauttaa ne listana"""
@@ -130,9 +143,7 @@ def add_data_to_excel(rows):
     app.open_application()
     try:
         app.open_workbook("output/template/template.xlsx")
-        today = date.today().strftime(
-            "%d.%m.%Y"
-        )
+        today = date.today().strftime("%d.%m.%Y")
         if rows:
             app.write_data_to_range(
                 f"A2:D{len(rows) + 1}",
@@ -169,8 +180,8 @@ def filter_and_get_top_5(rows):
     # Palautetaan top 5 työpaikat
     return [job[1] for job in scored_jobs[:5]]
 
-# Kirjaudutaan sähköpostipalvelimelle
-def send_email_summary(top_5_jobs):
+def send_notification_email(subject, body):
+    # Kirjaudutaan sähköpostipalvelimelle
     mail_credentials = vault.get_secret("EmailCredentials")
     mail = ImapSmtp(smtp_server=SMTP_SERVER, smtp_port=SMTP_PORT)
     mail.authorize_smtp(
@@ -178,18 +189,26 @@ def send_email_summary(top_5_jobs):
         password=mail_credentials["password"],  
     )
 
-    # Luodaan sähköpostin sisältö
+    # Sähköpostin lähetys
+    mail.send_message(
+        sender=mail_credentials["username"],
+        recipients=mail_credentials["recipient"],
+        subject=subject,
+        body=body,
+        html=True
+    )
+
+def send_email_summary(top_5_jobs):
+    # Luodaan sähköpostin sisältö ja lähetetään ilmoitusfunktion avulla
     body = "<h2>Päivän Top 5 kiinnostavimmat työpaikat</h2><ul>"
     for i, job in enumerate(top_5_jobs, start=1):
         body += f"<li><b>{i}. {job[0]}</b> - {job[1]} ({job[2]})<br>"
         body += f"<a href='{job[3]}'>Katso ilmoitus tästä</a></li><br>"
     body += "</ul>"
 
-    # Sähköpostin lähetys
-    mail.send_message(
-        sender=mail_credentials["username"],
-        recipients=mail_credentials["recipient"],
+    # Sähköpostin lähetys ilmoitusfunktion avulla
+    send_notification_email(
         subject=f"Uudet Top 5 työpaikat - {date.today().strftime('%d.%m.%Y')}",
-        body=body,
-        html=True
+        body=body
     )
+    
