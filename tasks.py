@@ -7,7 +7,7 @@ from playwright.sync_api import TimeoutError
 
 from datetime import datetime, date, timedelta
 from html import escape
-import sys 
+import sys
 import traceback
 
 SMTP_SERVER = "smtp.gmail.com"
@@ -31,14 +31,30 @@ def main():
         "Pilvipalveluasiantuntija"
 
     ]
-
     try:
-        search_duunitori(keywords)
+        tyomarkkintori_jobs = search_tyomarkkinatori(keywords)
+        duunitori_jobs = search_duunitori(keywords)
+
+        all_jobs = duunitori_jobs + tyomarkkintori_jobs
+        if all_jobs:
+            add_data_to_excel(all_jobs)
+
+        #Suodatetaan ja haetaan top 5 työpaikat
+        top_5_jobs = filter_and_get_top_5(all_jobs)
+
+        if top_5_jobs:
+            send_email_summary(top_5_jobs)
+        else:
+            print("Uusia työpaikkailmoituksia ei löytynyt.")
+            send_notification_email(
+                f"Ei uusia työpaikkoja - {date.today().strftime('%d.%m.%Y')}",
+                "<p>Uusia työpaikkailmoituksia ei löytynyt.</p>"
+            )
     except Exception as e:
-        # Ilmoitetaan virheestä käyttäjälle sähköpostitse
-        error_msg = f"Työpaikkahaun suoritus epäonnistui: {str(e)}\n\n{traceback.format_exc()}"
+        error_msg = f"Työpaikkahaun suoritus epäonnistui: {e}\n\n{traceback.format_exc()}"
         print(error_msg)
-        send_notification_email("Työpaikkahaun suoritus epäonnistui", f"<p>{escape(error_msg).replace('\n', '<br>')}</p>")
+        error_body = escape(error_msg).replace("\n", "<br>")
+        send_notification_email("Työpaikkahaun suoritus epäonnistui", f"<p>{error_body}</p>")
 
 
 def search_duunitori(keywords):
@@ -82,33 +98,39 @@ def search_duunitori(keywords):
         ).date()
         if published >= today - timedelta(days=1):
             links.append(link)
-    
+
     for link in links:
         page.goto("https://duunitori.fi" + link)
-        rows.append(get_data())
+        rows.append(get_duunitori_data())
 
     # Poistetaan kaksoiskappaleet listasta
     unique_rows = [list(x) for x in set(tuple(row) for row in rows)]
 
-    #Suodatetaan ja haetaan top 5 työpaikat
-    top_5_jobs = filter_and_get_top_5(unique_rows)
-
-    #Jos työpaikkoja löytyy, lähetetään yhteenveto sähköpostitse
-    if top_5_jobs:
-        send_email_summary(top_5_jobs)
-    else:
-        print("Uusia työpaikkailmoituksia ei löytynyt.")
-        send_notification_email(
-            f"Ei uusia työpaikkoja - {today.strftime('%d.%m.%Y')}",
-            "<p>Uusia työpaikkailmoituksia ei löytynyt.</p>"
-        )
 
     #Päivitetään rows muuttuja Excel tallennusta varten
     rows = unique_rows
-    if rows:
-        add_data_to_excel(rows)
 
-def get_data():
+    return rows
+
+def search_tyomarkkinatori(keywords):
+    page = browser.page()
+    jobs = []
+
+    page.goto("https://tyomarkkinatori.fi/henkiloasiakkaat/avoimet-tyopaikat?pa=MAX_1_DAY&r=01")
+    page.get_by_role("button", name="Salli kaikki").click()
+
+    for word in keywords:
+        page.get_by_role("textbox").fill(word)
+        page.get_by_role("button", name="Hae").click()
+        page.wait_for_timeout(1500)
+
+        jobs.extend(get_tyomarkkinatori_data())
+
+
+        page.get_by_role("textbox").fill("")
+
+    return jobs
+def get_duunitori_data():
     """Hakee työpaikkojen tiedot ja palauttaa ne listana"""
     page = browser.page()
     title = page.locator("h1.text--break-word").inner_text()
@@ -136,7 +158,28 @@ def get_data():
 
     return [title, company, ", ".join(company_location), page.url]
 
-    
+def get_tyomarkkinatori_data():
+    rows = []
+    page = browser.page()
+    results = page.locator("#tmt-haku-search-results-scroll-anchor")
+
+    jobs = results.locator(":scope > div").filter(has=page.locator("h3"))
+
+
+    for job in jobs.all():
+        try:
+            title = job.locator("h3").inner_text()
+            publisher = job.locator("ul > li").first.locator("span").inner_text()
+            location_texts = job.locator(".lpkjRD span").all_inner_texts()
+            location = location_texts[0] if location_texts else "ei tietoa"
+            href = job.locator("h3 a").get_attribute("href")
+            link = "https://tyomarkkinatori.fi" + href
+            rows.append([title, publisher, location, link])
+        except Exception as e:
+            print(f"Virhe työpaikan käsitelyssä: {e}")
+            continue
+    return rows
+
 def add_data_to_excel(rows):
     app = Application()
 
@@ -180,13 +223,26 @@ def filter_and_get_top_5(rows):
     # Palautetaan top 5 työpaikat
     return [job[1] for job in scored_jobs[:5]]
 
+def send_email_summary(top_5_jobs):
+    # Luodaan sähköpostin sisältö
+    body = "<h2>Päivän Top 5 kiinnostavimmat työpaikat</h2><ul>"
+    for i, job in enumerate(top_5_jobs, start=1):
+        body += f"<li><b>{i}. {job[0]}</b> - {job[1]} ({job[2]})<br>"
+        body += f"<a href='{job[3]}'>Katso ilmoitus tästä</a></li><br>"
+    body += "</ul>"
+
+    send_notification_email(
+        f"Uudet Top 5 työpaikat - {date.today().strftime('%d.%m.%Y')}",
+        body
+    )
+
+
 def send_notification_email(subject, body):
-    # Kirjaudutaan sähköpostipalvelimelle
     mail_credentials = vault.get_secret("EmailCredentials")
     mail = ImapSmtp(smtp_server=SMTP_SERVER, smtp_port=SMTP_PORT)
     mail.authorize_smtp(
         account=mail_credentials["username"],
-        password=mail_credentials["password"],  
+        password=mail_credentials["password"],
     )
 
     # Sähköpostin lähetys
@@ -197,18 +253,3 @@ def send_notification_email(subject, body):
         body=body,
         html=True
     )
-
-def send_email_summary(top_5_jobs):
-    # Luodaan sähköpostin sisältö ja lähetetään ilmoitusfunktion avulla
-    body = "<h2>Päivän Top 5 kiinnostavimmat työpaikat</h2><ul>"
-    for i, job in enumerate(top_5_jobs, start=1):
-        body += f"<li><b>{i}. {job[0]}</b> - {job[1]} ({job[2]})<br>"
-        body += f"<a href='{job[3]}'>Katso ilmoitus tästä</a></li><br>"
-    body += "</ul>"
-
-    # Sähköpostin lähetys ilmoitusfunktion avulla
-    send_notification_email(
-        subject=f"Uudet Top 5 työpaikat - {date.today().strftime('%d.%m.%Y')}",
-        body=body
-    )
-    
